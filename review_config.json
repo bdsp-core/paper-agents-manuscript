@@ -1,0 +1,26 @@
+{
+    "_comment": "Edit these fields to match your target journal. Used by the figures/tables agent and the overall tone of review.",
+
+    "journal_name": "Journal of the American Medical Association (JAMA Neurology)",
+    "paper_type": "Original research article",
+    "field": "Clinical neuroscience / computational neurology",
+    "word_limit": 3000,
+    "abstract_word_limit": 300,
+    "abstract_structure": "structured (Background, Methods, Results, Conclusions)",
+    "max_references": 40,
+    "max_figures": 5,
+    "max_tables": 5,
+    "figure_format": "TIFF or EPS",
+    "figure_resolution_dpi": 300,
+    "requires_data_availability_statement": true,
+    "requires_code_availability_statement": true,
+    "requires_ethics_statement": true,
+    "citation_style": "numbered superscript",
+    "style_guide": "AMA Manual of Style",
+
+    "custom_notes": [
+        "Avoid first person in abstracts",
+        "Report confidence intervals alongside p-values",
+        "Define all statistical methods in Methods section"
+    ]
+}
