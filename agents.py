@@ -41,12 +41,17 @@ class AgentResult:
     severity: str           # "ok" | "minor" | "moderate" | "major"
     references_found: list  # Populated only by reference agents
     elapsed: float = 0.0
+    score: Optional[float] = None
+    max_score: float = 0.0
+    score_category: str = ""
 
 
 @dataclass
 class Context:
     paper_text: str
     code_text: str = ""
+    repository_text: str = ""
+    repository_manifest: list[str] = field(default_factory=list)
     figures: list = field(default_factory=list)
     prior_results: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)
@@ -91,6 +96,38 @@ def _first_line(text: str) -> str:
     return "(no summary)"
 
 
+def _score_ratio(severity: str) -> float:
+    return {
+        "ok": 1.0,
+        "minor": 0.8,
+        "moderate": 0.55,
+        "major": 0.25,
+    }.get(severity, 0.5)
+
+
+def _build_result(agent: "BaseAgent", findings: str, elapsed: float,
+                  references_found: Optional[list] = None,
+                  summary: Optional[str] = None,
+                  severity: Optional[str] = None,
+                  score_override: Optional[float] = None) -> AgentResult:
+    resolved_severity = severity or _parse_severity(findings)
+    score = score_override if score_override is not None else round(
+        agent.max_score * _score_ratio(resolved_severity), 1
+    )
+    return AgentResult(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        summary=summary or _first_line(findings),
+        findings=findings,
+        severity=resolved_severity,
+        references_found=references_found or [],
+        elapsed=elapsed,
+        score=score,
+        max_score=agent.max_score,
+        score_category=agent.score_category,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent base class
 # ---------------------------------------------------------------------------
@@ -102,6 +139,8 @@ class BaseAgent:
     priority: int = 1        # 1, 2, or 3
     needs_code: bool = False
     needs_scholar: bool = False
+    max_score: float = 5.0
+    score_category: str = "general"
 
     def run(self, ctx: Context) -> AgentResult:
         raise NotImplementedError
@@ -116,6 +155,8 @@ class VSNCAgent(BaseAgent):
     name = "VSNC Framework"
     description = "Vision · Steps · News · Contributions · 5 S's (Patrick Winston/MIT)"
     priority = 1
+    max_score = 8.0
+    score_category = "argument"
 
     SYSTEM = textwrap.dedent("""
         You are an expert scientific writing reviewer applying the VSNC framework
@@ -150,12 +191,7 @@ class VSNCAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class IntroductionAgent(BaseAgent):
@@ -163,6 +199,8 @@ class IntroductionAgent(BaseAgent):
     name = "Introduction Audit"
     description = "Adelson formula · Kajiya 'dynamite intro' · Freeman tone"
     priority = 1
+    max_score = 8.0
+    score_category = "argument"
 
     SYSTEM = textwrap.dedent("""
         You are a scientific writing reviewer applying the Freeman/Adelson/Kajiya framework.
@@ -194,12 +232,7 @@ class IntroductionAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class SentenceArchitectureAgent(BaseAgent):
@@ -207,6 +240,8 @@ class SentenceArchitectureAgent(BaseAgent):
     name = "Sentence Architecture"
     description = "Gopen & Swan: stress positions, topic positions, subject-verb proximity"
     priority = 1
+    max_score = 8.0
+    score_category = "prose"
 
     SYSTEM = textwrap.dedent("""
         You are a scientific editor applying Gopen & Swan's structural principles.
@@ -242,12 +277,7 @@ class SentenceArchitectureAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class VoiceAndTenseAgent(BaseAgent):
@@ -255,6 +285,8 @@ class VoiceAndTenseAgent(BaseAgent):
     name = "Voice & Tense"
     description = "Active voice · Past for methods/results · Present for facts"
     priority = 1
+    max_score = 6.0
+    score_category = "prose"
 
     SYSTEM = textwrap.dedent("""
         You are a scientific editor specializing in voice and tense.
@@ -286,12 +318,7 @@ class VoiceAndTenseAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class ConcistnessAgent(BaseAgent):
@@ -299,6 +326,8 @@ class ConcistnessAgent(BaseAgent):
     name = "Conciseness Audit"
     description = "Omit needless words · Nominalizations · Throat-clearing"
     priority = 1
+    max_score = 6.0
+    score_category = "prose"
 
     SYSTEM = textwrap.dedent("""
         You are a scientific editor applying Strunk & White's core rule:
@@ -339,12 +368,7 @@ class ConcistnessAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class ParagraphQualityAgent(BaseAgent):
@@ -352,6 +376,8 @@ class ParagraphQualityAgent(BaseAgent):
     name = "Paragraph Quality"
     description = "Topic sentences · Unity · Flow · Reader-first (Knuth)"
     priority = 1
+    max_score = 8.0
+    score_category = "prose"
 
     SYSTEM = textwrap.dedent("""
         You are a writing editor evaluating paragraph-level quality in a scientific paper.
@@ -382,12 +408,7 @@ class ParagraphQualityAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class AcronymAgent(BaseAgent):
@@ -395,6 +416,8 @@ class AcronymAgent(BaseAgent):
     name = "Acronym Audit"
     description = "Every acronym defined before first use · Consistency after definition"
     priority = 1
+    max_score = 4.0
+    score_category = "clarity"
 
     SYSTEM = textwrap.dedent("""
         You are a meticulous scientific editor auditing acronym and abbreviation usage.
@@ -426,12 +449,7 @@ class AcronymAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class FiguresTablesAgent(BaseAgent):
@@ -439,6 +457,8 @@ class FiguresTablesAgent(BaseAgent):
     name = "Figures, Tables & Captions"
     description = "Coverage · Caption completeness · Figure necessity · Table formatting"
     priority = 1
+    max_score = 6.0
+    score_category = "presentation"
 
     SYSTEM = textwrap.dedent("""
         You are a scientific editor auditing figures, tables, and their captions.
@@ -483,12 +503,7 @@ class FiguresTablesAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class ReproducibilityAgent(BaseAgent):
@@ -496,7 +511,8 @@ class ReproducibilityAgent(BaseAgent):
     name = "Reproducibility Check"
     description = "Results match code/data · Methods accurately described"
     priority = 1
-    needs_code = True
+    max_score = 12.0
+    score_category = "rigor"
 
     SYSTEM = textwrap.dedent("""
         You are a reproducibility reviewer. Verify that the paper accurately represents
@@ -533,21 +549,19 @@ class ReproducibilityAgent(BaseAgent):
 
     def run(self, ctx: Context) -> AgentResult:
         t0 = time.time()
-        if not ctx.code_text.strip():
-            return AgentResult(
-                agent_id=self.id, agent_name=self.name,
+        evidence = ctx.code_text.strip() or ctx.repository_text.strip()
+        if not evidence:
+            return _build_result(
+                self,
+                "No code or repository snapshot was provided. Pass --code-file or allow the repo snapshot to be loaded to enable this agent.",
+                elapsed=0.0,
                 summary="Skipped — no code/data provided",
-                findings="No code or data was provided. Pass --code-file to enable this agent.",
-                severity="ok", references_found=[], elapsed=0.0,
+                severity="major",
+                score_override=0.0,
             )
-        user = f"PAPER:\n\n{ctx.paper_text}\n\nCODE / DATA:\n\n{ctx.code_text}"
+        user = f"PAPER:\n\n{ctx.paper_text}\n\nCODE / DATA:\n\n{evidence}"
         findings = _call(ctx.client, self.SYSTEM, user)
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 # ===========================================================================
@@ -559,6 +573,8 @@ class ConsistencyAgent(BaseAgent):
     name = "Internal Consistency"
     description = "Terminology · Numbers · Claims across sections"
     priority = 2
+    max_score = 8.0
+    score_category = "rigor"
 
     SYSTEM = textwrap.dedent("""
         You are a meticulous scientific editor checking for internal consistency.
@@ -597,12 +613,7 @@ class ConsistencyAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 class DiscussionAgent(BaseAgent):
@@ -610,6 +621,8 @@ class DiscussionAgent(BaseAgent):
     name = "Discussion & Related Work"
     description = "Coverage of related literature · Positioning · Limitations · Future directions"
     priority = 2
+    max_score = 6.0
+    score_category = "positioning"
 
     SYSTEM = textwrap.dedent("""
         You are an expert reviewer evaluating the Discussion and Related Work sections
@@ -655,12 +668,67 @@ class DiscussionAgent(BaseAgent):
         t0 = time.time()
         findings = _call(ctx.client, self.SYSTEM,
                          f"PAPER:\n\n{ctx.paper_text}")
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
+        return _build_result(self, findings, time.time() - t0)
+
+
+class TruthfulnessAgent(BaseAgent):
+    id = "truthfulness"
+    name = "Truthfulness & Code Grounding"
+    description = "Checks that reported results and claims are derivable from repository code and described honestly"
+    priority = 2
+    max_score = 14.0
+    score_category = "truthfulness"
+
+    SYSTEM = textwrap.dedent("""
+        You are a truthfulness auditor for a scientific manuscript.
+
+        Your job is stricter than ordinary writing review: verify that the paper's claims
+        are grounded in the repository evidence provided and that the language does not
+        overstate what the code actually supports.
+
+        Evaluate these dimensions:
+        1. Result derivability: are reported metrics, counts, analyses, and outputs
+           directly present in or credibly derivable from the repository evidence?
+        2. Method-description fidelity: does the prose accurately describe what the code
+           appears to implement, including important parameters and processing steps?
+        3. Claim calibration: are novelty, performance, causality, robustness, and
+           generalization claims stated no more strongly than the evidence warrants?
+        4. Missing provenance: what claims would need additional scripts, configs,
+           data manifests, notebooks, or logs to be fully verified?
+
+        Output format:
+        SUMMARY: <one-line verdict>
+        SEVERITY: ok | minor | moderate | major
+
+        Then provide four short sections:
+        - Verified claims
+        - Unverifiable claims
+        - Mismatches or overstatements
+        - Highest-value fixes to improve truthfulness score
+
+        Be explicit and skeptical. If the repository evidence is incomplete, say so.
+    """).strip()
+
+    def run(self, ctx: Context) -> AgentResult:
+        t0 = time.time()
+        if not ctx.repository_text.strip() and not ctx.code_text.strip():
+            return _build_result(
+                self,
+                "No repository or code evidence was available, so truthfulness could not be assessed.",
+                elapsed=0.0,
+                summary="Skipped — no repository evidence available",
+                severity="major",
+                score_override=0.0,
+            )
+        user = (
+            f"JOURNAL CONFIG:\n{ctx.config}\n\n"
+            f"PAPER:\n\n{ctx.paper_text}\n\n"
+            f"REPOSITORY MANIFEST:\n" + "\n".join(ctx.repository_manifest[:200]) + "\n\n"
+            f"REPOSITORY EVIDENCE:\n\n{ctx.repository_text}\n\n"
+            f"OPTIONAL EXTRA CODE / DATA:\n\n{ctx.code_text}"
         )
+        findings = _call(ctx.client, self.SYSTEM, user, max_tokens=2400)
+        return _build_result(self, findings, time.time() - t0)
 
 
 class MissingReferencesAgent(BaseAgent):
@@ -674,6 +742,8 @@ class MissingReferencesAgent(BaseAgent):
     description = "Finds uncited claims · Searches Google Scholar for candidates"
     priority = 2
     needs_scholar = True
+    max_score = 6.0
+    score_category = "citations"
 
     IDENTIFY_SYSTEM = textwrap.dedent("""
         You are a scientific editor identifying claims that need citations.
@@ -800,13 +870,13 @@ class MissingReferencesAgent(BaseAgent):
             findings = header + "\n".join(report_lines)
             severity = "major" if n_claims > 8 else "moderate" if n_claims > 3 else "minor"
 
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=f"Found {sum(1 for r in report_lines if r.startswith('**Uncited claim'))} uncited claims",
-            findings=findings,
-            severity=severity,
+        return _build_result(
+            self,
+            findings,
+            time.time() - t0,
             references_found=all_claims,
-            elapsed=time.time() - t0,
+            summary=f"Found {sum(1 for r in report_lines if r.startswith('**Uncited claim'))} uncited claims",
+            severity=severity,
         )
 
 
@@ -820,6 +890,8 @@ class ReferenceQualityAgent(BaseAgent):
     description = "Checks cited refs for accuracy, appropriateness, and whether better refs exist"
     priority = 2
     needs_scholar = True
+    max_score = 6.0
+    score_category = "citations"
 
     EXTRACT_SYSTEM = textwrap.dedent("""
         Extract the reference list from the paper.
@@ -882,11 +954,12 @@ class ReferenceQualityAgent(BaseAgent):
         t0 = time.time()
         refs = self._extract_references(ctx)
         if not refs:
-            return AgentResult(
-                agent_id=self.id, agent_name=self.name,
+            return _build_result(
+                self,
+                "Could not extract a reference list. Check that references are included.",
+                time.time() - t0,
                 summary="No reference list found in paper",
-                findings="Could not extract a reference list. Check that references are included.",
-                severity="moderate", references_found=[], elapsed=time.time() - t0,
+                severity="moderate",
             )
 
         report_lines = [f"Assessed **{len(refs)} references**.\n"]
@@ -943,12 +1016,12 @@ class ReferenceQualityAgent(BaseAgent):
 
         severity = "major" if issues > 5 else "moderate" if issues > 2 else "minor" if issues > 0 else "ok"
 
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
+        return _build_result(
+            self,
+            "\n".join(report_lines),
+            time.time() - t0,
             summary=f"{issues} reference issue(s) found across {len(refs)} references",
-            findings="\n".join(report_lines),
-            severity=severity, references_found=[],
-            elapsed=time.time() - t0,
+            severity=severity,
         )
 
 
@@ -961,6 +1034,8 @@ class OrchestratorAgent(BaseAgent):
     name = "Synthesis & Prioritized Action Plan"
     description = "Synthesizes all agent findings into a ranked action plan"
     priority = 3
+    max_score = 8.0
+    score_category = "synthesis"
 
     SYSTEM = textwrap.dedent("""
         You are a senior scientific editor. You have received review reports from multiple
@@ -997,12 +1072,7 @@ class OrchestratorAgent(BaseAgent):
         user = (f"PAPER EXCERPT (first 1500 chars):\n{ctx.paper_text[:1500]}\n\n"
                 f"AGENT REPORTS:\n{prior_text}")
         findings = _call(ctx.client, self.SYSTEM, user, max_tokens=2048)
-        return AgentResult(
-            agent_id=self.id, agent_name=self.name,
-            summary=_first_line(findings), findings=findings,
-            severity=_parse_severity(findings), references_found=[],
-            elapsed=time.time() - t0,
-        )
+        return _build_result(self, findings, time.time() - t0)
 
 
 # ===========================================================================
@@ -1021,6 +1091,7 @@ ALL_AGENTS: list[BaseAgent] = [
     FiguresTablesAgent(),
     ReproducibilityAgent(),
     # Phase 2
+    TruthfulnessAgent(),
     ConsistencyAgent(),
     DiscussionAgent(),
     MissingReferencesAgent(),

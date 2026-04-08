@@ -5,6 +5,10 @@ Each agent targets a specific dimension of writing quality, grounded in establis
 (VSNC/Winston, Gopen & Swan, Adelson/Freeman, Strunk & White). Two agents query Google Scholar
 to surface missing citations and verify existing ones.
 
+The pipeline now also supports iterative score-tracking, a repository-grounded truthfulness
+check, and an auto-refreshing HTML dashboard so you can see whether rewrites are improving
+the manuscript over time.
+
 ## Agents
 
 | # | Phase | Agent | What it checks |
@@ -17,12 +21,13 @@ to surface missing citations and verify existing ones.
 | 6 | 1 | **Paragraph Quality** | Topic sentences · Unity · Logical flow · Reader-first principle (Knuth) |
 | 7 | 1 | **Acronym Audit** | Every acronym defined before first use · Double-definitions · Post-definition consistency |
 | 8 | 1 | **Figures, Tables & Captions** | Coverage · Caption titles state findings · Panel descriptions · Self-contained captions |
-| 9 | 1 | **Reproducibility Check** | Results traceable to code/data · Methods match implementation *(requires --code-file)* |
-| 10 | 2 | **Internal Consistency** | Terminology · Numbers · Claims across abstract/methods/results/discussion |
-| 11 | 2 | **Discussion & Related Work** | Positioning in literature · Gaps · Limitations · Strength of conclusion |
-| 12 | 2 | **Missing References** 🔍 | Paragraph-by-paragraph scan for uncited claims → Google Scholar search for candidates |
-| 13 | 2 | **Reference Quality** 🔍 | Verifies cited refs via Scholar · Flags wrong papers · Suggests better canonical refs |
-| 14 | 3 | **Synthesis & Action Plan** | Cross-cutting synthesis of all agents → ranked top-10 action plan + readiness verdict |
+| 9 | 1 | **Reproducibility Check** | Results traceable to code/data or repository snapshot · Methods match implementation |
+| 10 | 2 | **Truthfulness & Code Grounding** | Checks whether claims are derivable from repository code and honestly described |
+| 11 | 2 | **Internal Consistency** | Terminology · Numbers · Claims across abstract/methods/results/discussion |
+| 12 | 2 | **Discussion & Related Work** | Positioning in literature · Gaps · Limitations · Strength of conclusion |
+| 13 | 2 | **Missing References** 🔍 | Paragraph-by-paragraph scan for uncited claims → Google Scholar search for candidates |
+| 14 | 2 | **Reference Quality** 🔍 | Verifies cited refs via Scholar · Flags wrong papers · Suggests better canonical refs |
+| 15 | 3 | **Synthesis & Action Plan** | Cross-cutting synthesis of all agents → ranked top-10 action plan + readiness verdict |
 
 🔍 = queries Google Scholar (can be skipped with `--no-scholar`)
 
@@ -38,8 +43,15 @@ python run_review.py my_paper.txt
 # With code for reproducibility checking
 python run_review.py my_paper.txt --code-file analysis.py
 
+# Ground the review in the repository codebase
+python run_review.py my_paper.txt --repo-path .
+
 # Skip Scholar agents (faster, no rate-limit risk)
 python run_review.py my_paper.txt --no-scholar
+
+# Track iterations for score improvement
+python run_review.py my_paper.txt --iteration-label baseline
+python run_review.py my_paper.txt --iteration-label rewrite-1
 
 # Run only specific agents
 python run_review.py my_paper.txt --agents vsnc,intro,paragraphs,discussion
@@ -55,6 +67,20 @@ python run_review.py my_paper.txt --verbose
 ```
 
 Reports are saved to `reports/review_<papername>_YYYYMMDD_HHMMSS.md`.
+Score history is saved to `reports/score_history.json`.
+The dashboard is saved to `reports/score_dashboard.html` and auto-refreshes every 30 seconds.
+
+## Scoring loop
+
+Each agent now contributes points to a tracked score, grouped into categories such as
+`argument`, `prose`, `rigor`, `citations`, and `truthfulness`.
+
+This makes it easy to run an AutoResearch-style loop:
+1. Evaluate the manuscript.
+2. Inspect the weakest categories or agents.
+3. Rewrite the paper to target those weaknesses.
+4. Re-run with a new `--iteration-label`.
+5. Watch total and category scores improve in the dashboard.
 
 ## Pipeline architecture
 
@@ -70,7 +96,7 @@ voice                 │     discussion             │──→  orchestrator
 conciseness           │     missing_refs  🔍       │     (action plan)
 paragraphs            │     ref_quality   🔍      ─┘
 acronyms              │
-figures_tables        │
+figures_tables        │     truthfulness
 reproducibility      ─┘
 ```
 
@@ -82,6 +108,9 @@ Claude handles them well in practice. For best results, strip comments first.
 
 The code file (`--code-file`) can be Python, R, MATLAB, or a plain-text description
 of the computational pipeline. Multiple files can be concatenated.
+
+The repository snapshot (`--repo-path`) is used by the reproducibility and truthfulness
+agents to compare manuscript claims against the code that is actually present in the repo.
 
 ## Google Scholar notes
 
