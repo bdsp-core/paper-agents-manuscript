@@ -18,6 +18,13 @@
     "citation_style": "numbered superscript",
     "style_guide": "AMA Manual of Style",
 
+    "_preservation_comment": "Used by the prose review agents and the rewrite pipeline. protected_terms are topic nouns that must never be reworded or flagged (often nominalizations that are actually concepts). protect_hedges keeps scientific hedges/scope conditions from being cut as 'clutter'.",
+    "protected_terms": [
+        "pharmacovigilance", "empirical null", "noise floor", "calibration",
+        "phenotype", "annotation", "classification", "scrambled-surrogate"
+    ],
+    "protect_hedges": true,
+
     "custom_notes": [
         "Avoid first person in abstracts",
         "Report confidence intervals alongside p-values",

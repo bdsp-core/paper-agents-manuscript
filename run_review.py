@@ -456,6 +456,9 @@ def main() -> None:
     )
     parser.add_argument("paper", nargs="?", help="Path to paper text file (.txt, .md, .tex)")
     parser.add_argument("--code-file", "-c", help="Path to code / data file (enables reproducibility agent)")
+    parser.add_argument("--revised", help="Path to a revised version of the paper; enables the "
+                        "fidelity agent's diff mode (verifies the rewrite preserved every claim, "
+                        "hedge, number, and citation)")
     parser.add_argument("--agents", "-a",
                         help="Comma-separated agent IDs to run (default: all). "
                              "Use --list-agents to see IDs.")
@@ -524,6 +527,15 @@ def main() -> None:
     repo_snapshot, repo_manifest = _build_repo_snapshot(repo_path)
     if repo_manifest:
         print(bold(f"🧭 Repo snapshot: {repo_path}  ({len(repo_manifest)} files indexed)"))
+
+    # Load revised version (enables fidelity diff mode)
+    revised_text = ""
+    if args.revised:
+        if not Path(args.revised).exists():
+            print(yellow(f"Warning: revised file not found: {args.revised} — fidelity diff skipped"))
+        else:
+            revised_text = Path(args.revised).read_text(encoding="utf-8")
+            print(bold(f"📝 Revised:  {args.revised}  ({len(revised_text):,} chars) — fidelity diff enabled"))
 
     # Select agents
     if args.agents:
@@ -596,6 +608,7 @@ def main() -> None:
             prior_results=prior_results,
             config=config,
             client=client,
+            revised_text=revised_text,
         )
 
         try:

@@ -1,13 +1,24 @@
 # paper-review-agents
 
-Multi-agent pipeline for reviewing scientific manuscript drafts before journal submission.
-Each agent targets a specific dimension of writing quality, grounded in established frameworks
-(VSNC/Winston, Gopen & Swan, Adelson/Freeman, Strunk & White). Two agents query Google Scholar
-to surface missing citations and verify existing ones.
+Multi-agent pipeline for **reviewing and rewriting** scientific manuscript drafts before
+journal submission. Each agent targets a specific dimension of writing quality, grounded in
+established frameworks (VSNC/Winston, Gopen & Swan, Adelson/Freeman, Strunk & White, and
+Williams' *Style: Lessons in Clarity and Grace*). Two agents query Google Scholar to surface
+missing citations and verify existing ones.
 
-The pipeline now also supports iterative score-tracking, a repository-grounded truthfulness
+The tool has two halves that form a closed loop:
+
+- **Review** (`run_review.py`) — 16 agents grade the manuscript across argument, prose, rigor,
+  citations, fidelity, and more, producing a scored report + action plan.
+- **Rewrite** (`run_rewrite.py`) — the *Clarity and Grace* pipeline (clarity → cohesion →
+  concision) improves the prose paragraph by paragraph, with a **fidelity gate** that reverts
+  any edit which would change a claim, hedge, number, or citation. See
+  [Rewrite mode](#rewrite-mode-clarity-and-grace).
+
+The pipeline also supports iterative score-tracking, a repository-grounded truthfulness
 check, and an auto-refreshing HTML dashboard so you can see whether rewrites are improving
-the manuscript over time.
+the manuscript over time — and the rewrite half can re-score itself into that dashboard
+automatically.
 
 ## Agents
 
@@ -25,11 +36,52 @@ the manuscript over time.
 | 10 | 2 | **Truthfulness & Code Grounding** | Checks whether claims are derivable from repository code and honestly described |
 | 11 | 2 | **Internal Consistency** | Terminology · Numbers · Claims across abstract/methods/results/discussion |
 | 12 | 2 | **Discussion & Related Work** | Positioning in literature · Gaps · Limitations · Strength of conclusion |
-| 13 | 2 | **Missing References** 🔍 | Paragraph-by-paragraph scan for uncited claims → Google Scholar search for candidates |
-| 14 | 2 | **Reference Quality** 🔍 | Verifies cited refs via Scholar · Flags wrong papers · Suggests better canonical refs |
-| 15 | 3 | **Synthesis & Action Plan** | Cross-cutting synthesis of all agents → ranked top-10 action plan + readiness verdict |
+| 13 | 2 | **Fidelity / Meaning-Preservation** | Verifies a rewrite kept every claim, hedge, number, and citation (diff mode via `--revised`) |
+| 14 | 2 | **Missing References** 🔍 | Paragraph-by-paragraph scan for uncited claims → Google Scholar search for candidates |
+| 15 | 2 | **Reference Quality** 🔍 | Verifies cited refs via Scholar · Flags wrong papers · Suggests better canonical refs |
+| 16 | 3 | **Synthesis & Action Plan** | Cross-cutting synthesis of all agents → ranked top-10 action plan + readiness verdict |
 
 🔍 = queries Google Scholar (can be skipped with `--no-scholar`)
+
+## Rewrite mode (Clarity and Grace)
+
+The agents above *grade* the manuscript. The companion **rewrite pipeline** (`run_rewrite.py`)
+*improves* it, applying Williams' *Style: Lessons in Clarity and Grace* one paragraph at a time:
+
+```
+clarity  →  cohesion  →  concision  →  fidelity gate (revert on FLAG)
+```
+
+- **clarity** — characters as subjects, actions as verbs, kill fixable nominalizations (but
+  KEEP topic-term nominalizations like *calibration*, *phenotype*), active voice deferring to flow
+- **cohesion** — old-before-new (topic position), important-at-end (stress position), consistent topics
+- **concision** — cut filler/redundancy/metadiscourse, control sprawl — **without** touching hedges or scope
+- **fidelity gate** — after each paragraph, [agents.fidelity_verify](agents.py) checks that every claim,
+  hedge, number, and citation survived; anything risky is **reverted to the original**
+
+```bash
+# Dry run: which paragraphs would be rewritten (no API calls)
+python run_rewrite.py paper.md --dry-run
+
+# Rewrite -> paper.revised.md  (+ paper.revised.changelog.md), fidelity gate on
+python run_rewrite.py paper.md
+
+# Rewrite, then score the result against the original — the delta lands in the dashboard
+python run_rewrite.py paper.md --review --iteration-label rewrite-1
+```
+
+This closes the scoring loop: instead of rewriting by hand between iterations, run `run_rewrite.py`
+and the new version is produced, fidelity-checked, and re-scored automatically. The agent prompts
+live in [clarity_and_grace/](clarity_and_grace/) (also exposed as Claude Code subagents in
+[.claude/agents/](.claude/agents/)).
+
+### Verifying a rewrite you already have
+
+Even without the rewrite pipeline, you can fidelity-check any two versions:
+
+```bash
+python run_review.py revised.md --revised original.md --agents fidelity
+```
 
 ## Quick start
 
@@ -93,11 +145,13 @@ vsnc                 ─┐
 intro                 │
 sentences             │──→  consistency          ─┐
 voice                 │     discussion             │──→  orchestrator
-conciseness           │     missing_refs  🔍       │     (action plan)
-paragraphs            │     ref_quality   🔍      ─┘
-acronyms              │
-figures_tables        │     truthfulness
-reproducibility      ─┘
+conciseness           │     fidelity  (--revised)  │     (action plan)
+paragraphs            │     missing_refs  🔍        │
+acronyms              │     ref_quality   🔍       ─┘
+figures_tables        │
+reproducibility      ─┘     truthfulness
+
+  run_rewrite.py:  clarity → cohesion → concision → fidelity gate  (rewrite half of the loop)
 ```
 
 ## Input formats
@@ -131,9 +185,18 @@ Edit `review_config.json`:
     "word_limit": 3000,
     "abstract_word_limit": 150,
     "max_figures": 4,
-    "citation_style": "numbered superscript"
+    "citation_style": "numbered superscript",
+
+    "protected_terms": ["calibration", "phenotype", "empirical null"],
+    "protect_hedges": true
 }
 ```
+
+`protected_terms` and `protect_hedges` feed the **preservation rules** that the prose
+review agents and the rewrite pipeline obey. They stop the Strunk & White / Gopen & Swan
+agents from "fixing" a topic-term nominalization (*calibration* → *calibrate*) or cutting a
+scientific hedge (*may be associated with*) as if it were clutter — the failure mode that
+makes naive style tools dangerous on a clinical manuscript.
 
 ## Requirements
 
@@ -153,6 +216,18 @@ The two tools are designed to work together for a complete pre-submission check:
 1. Run `paper-agents-figures` to review all figures
 2. Run `paper-agents-manuscript` (this repo) to review the full manuscript text
 
+## Files
+
+| File | Role |
+|------|------|
+| `run_review.py` | CLI for the review pipeline (scoring, dashboard, `--revised` fidelity diff) |
+| `run_rewrite.py` | CLI for the Clarity-and-Grace rewrite pipeline (`--review` closes the loop) |
+| `agents.py` | The 16 review agents, the preservation rules, and `fidelity_verify()` |
+| `rewrite_agents.py` | The clarity / cohesion / concision rewriters |
+| `review_config.json` | Journal settings + `protected_terms` / `protect_hedges` |
+| `clarity_and_grace/` | Source-of-truth prompts for the rewrite agents (+ Williams coordinator) |
+| `.claude/agents/` | The same four agents exposed as Claude Code subagents |
+
 ## License
 
 MIT
@@ -160,3 +235,7 @@ MIT
 ## About
 
 Built for the BDSP Computational Clinical Neurology Lab at Massachusetts General Hospital / Harvard Medical School.
+
+The Clarity-and-Grace rewrite pipeline and fidelity gate apply Joseph M. Williams'
+*Style: Lessons in Clarity and Grace*, adapted so that scientific hedges, statistics,
+citations, and topic terms are preserved exactly while prose is sharpened.

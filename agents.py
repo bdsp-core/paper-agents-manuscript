@@ -56,6 +56,7 @@ class Context:
     prior_results: dict = field(default_factory=dict)
     config: dict = field(default_factory=dict)
     client: Optional[anthropic.Anthropic] = None
+    revised_text: str = ""   # optional second version, for the fidelity diff check
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,46 @@ def _score_ratio(severity: str) -> float:
         "moderate": 0.55,
         "major": 0.25,
     }.get(severity, 0.5)
+
+
+def _preservation_block(config: dict) -> str:
+    """Williams keep-list + hedge/number invariants, injected into prose agents.
+
+    Without this, the Strunk & White / Gopen & Swan agents will happily recommend
+    edits that destroy a scientific manuscript: "fixing" topic-term nominalizations
+    (calibration, phenotype), cutting hedges as "clutter", or rewording a claim's
+    strength. Driven by review_config.json (`protected_terms`, `protect_hedges`).
+    """
+    terms = config.get("protected_terms", []) or []
+    protect_hedges = config.get("protect_hedges", True)
+    lines = [
+        "",
+        "## PRESERVATION RULES — never recommend any edit that violates these "
+        "(from Williams, *Style: Lessons in Clarity and Grace*)",
+        "- KEEP topic-term nominalizations. Many essential scientific nouns are "
+        "nominalizations (classification, calibration, inference, phenotype, "
+        "annotation, distribution, regression). They are concepts, not buried "
+        "actions. Test: if removing the noun changes what the paper is ABOUT, it "
+        "STAYS. Never recommend 'fixing' a defined term, acronym, or topic concept.",
+    ]
+    if terms:
+        lines.append("- These are protected topic terms for this paper — never "
+                     "reword, simplify, or flag them: " + ", ".join(terms) + ".")
+    if protect_hedges:
+        lines.append(
+            "- HEDGES AND SCOPE ARE SACRED. Never recommend cutting or weakening "
+            "*may, might, could, appears, suggests, is associated with, consistent "
+            "with, in the validation set, under assumption X, candidate, "
+            "hypothesis-generating*. \"X may be associated with Y\" must NEVER become "
+            "\"X is associated with Y\" or \"X causes Y\". Do not list scientific "
+            "hedges or scope conditions as 'hedging clutter' or 'needless words'.")
+    lines.append(
+        "- Never recommend changing numbers, statistics, p-values, confidence "
+        "intervals, units, citations, cross-references, or math.")
+    lines.append(
+        "- Prefer active voice, but a passive that puts old/familiar information "
+        "first (topic position) is CORRECT — do not blanket-flag passives.")
+    return "\n".join(lines)
 
 
 def _build_result(agent: "BaseAgent", findings: str, elapsed: float,
@@ -275,7 +316,7 @@ class SentenceArchitectureAgent(BaseAgent):
 
     def run(self, ctx: Context) -> AgentResult:
         t0 = time.time()
-        findings = _call(ctx.client, self.SYSTEM,
+        findings = _call(ctx.client, self.SYSTEM + _preservation_block(ctx.config),
                          f"PAPER:\n\n{ctx.paper_text}")
         return _build_result(self, findings, time.time() - t0)
 
@@ -316,7 +357,7 @@ class VoiceAndTenseAgent(BaseAgent):
 
     def run(self, ctx: Context) -> AgentResult:
         t0 = time.time()
-        findings = _call(ctx.client, self.SYSTEM,
+        findings = _call(ctx.client, self.SYSTEM + _preservation_block(ctx.config),
                          f"PAPER:\n\n{ctx.paper_text}")
         return _build_result(self, findings, time.time() - t0)
 
@@ -366,7 +407,7 @@ class ConcistnessAgent(BaseAgent):
 
     def run(self, ctx: Context) -> AgentResult:
         t0 = time.time()
-        findings = _call(ctx.client, self.SYSTEM,
+        findings = _call(ctx.client, self.SYSTEM + _preservation_block(ctx.config),
                          f"PAPER:\n\n{ctx.paper_text}")
         return _build_result(self, findings, time.time() - t0)
 
@@ -406,7 +447,7 @@ class ParagraphQualityAgent(BaseAgent):
 
     def run(self, ctx: Context) -> AgentResult:
         t0 = time.time()
-        findings = _call(ctx.client, self.SYSTEM,
+        findings = _call(ctx.client, self.SYSTEM + _preservation_block(ctx.config),
                          f"PAPER:\n\n{ctx.paper_text}")
         return _build_result(self, findings, time.time() - t0)
 
@@ -1029,6 +1070,89 @@ class ReferenceQualityAgent(BaseAgent):
 #  PHASE 3 — Orchestrator / synthesis
 # ===========================================================================
 
+FIDELITY_SYSTEM = textwrap.dedent("""
+    You are the FIDELITY agent — the guardrail for a scientific manuscript. Williams'
+    style principles improve *how* a paper reads; your job is to guarantee an edit never
+    changed *what it says*. You are adversarial toward any rewrite: assume an error was
+    introduced and try to find it. You do not rewrite — you return a verdict.
+
+    ## Checklist
+    1. Claim strength / direction — same epistemic force. Catch silent upgrades
+       (*may be associated with* → *is associated with*, *suggests* → *shows*) and
+       silent downgrades.
+    2. Hedges and scope conditions present in the original are all present in the
+       revision (reworded is fine, removed/weakened is not): *may, might, appears,
+       suggests, under assumption X, in the validation set, for subgroup Y, candidate,
+       hypothesis-generating*.
+    3. Numbers / statistics / units byte-identical: n, %, p-values, CIs, AUC, effect
+       sizes, dates, thresholds. No rounding, no reformatting.
+    4. Citations and cross-references unchanged: every \\cite/[n]/author–year key.
+    5. Math unchanged: every symbol, subscript, and equation.
+    6. Defined terms / acronyms / technical nouns unchanged in form and meaning
+       (delirium, calibration, phenotype not paraphrased into something looser).
+    7. No new content (no fact, claim, or implication absent from the original).
+    8. No lost content (no clause carrying real information dropped under "concision").
+    9. Emphasis — the same main point is still emphasized.
+
+    When in doubt, FLAG. A false alarm costs one re-check; a missed meaning change costs
+    the paper.
+""").strip()
+
+
+def fidelity_verify(client, original: str, revised: str, config: dict) -> tuple[bool, str]:
+    """Compare original vs revised; return (ok, report). ok=False means FLAG.
+
+    Reusable by both the FidelityAgent (whole-document) and run_rewrite.py (per
+    paragraph gate)."""
+    if original.strip() == revised.strip():
+        return True, "VERDICT: PASS\n(no change)"
+    user = (
+        "Compare the REVISED text against the ORIGINAL using your checklist. "
+        "Respond with exactly one verdict line — `VERDICT: PASS` or `VERDICT: FLAG` — "
+        "then, if FLAG, an ISSUES list quoting the original vs revised span for each "
+        "discrepancy.\n\n"
+        f"ORIGINAL:\n{original}\n\nREVISED:\n{revised}"
+    )
+    report = _call(client, FIDELITY_SYSTEM, user, max_tokens=1024)
+    ok = "verdict: flag" not in report.lower()
+    return ok, report
+
+
+class FidelityAgent(BaseAgent):
+    id = "fidelity"
+    name = "Fidelity / Meaning-Preservation"
+    description = "Verifies a rewrite kept every claim, hedge, number, and citation (use --revised)"
+    priority = 2
+    max_score = 10.0
+    score_category = "fidelity"
+
+    SYSTEM = FIDELITY_SYSTEM
+
+    def run(self, ctx: Context) -> AgentResult:
+        t0 = time.time()
+        if ctx.revised_text.strip():
+            # Diff mode: did the revision preserve the science?
+            ok, report = fidelity_verify(ctx.client, ctx.paper_text,
+                                         ctx.revised_text, ctx.config)
+            severity = "ok" if ok else "major"
+            summary = ("PASS — revision preserved all claims, hedges, numbers, "
+                       "and citations" if ok else
+                       "FLAG — the revision changed meaning, a hedge, a number, "
+                       "or a citation")
+            findings = f"SEVERITY: {severity}\n\n{report}"
+            return _build_result(self, findings, time.time() - t0,
+                                 summary=summary, severity=severity)
+        # Single-document mode: advisory — flag what a careless edit could break.
+        system = self.SYSTEM + (
+            "\n\n## Single-document mode\nNo revised version was supplied. Instead, "
+            "list the claims, hedges, scope conditions, numbers, and defined terms most "
+            "AT RISK of being damaged by a careless prose edit, so an editor can guard "
+            "them. This is advisory; SEVERITY: ok unless the paper already contains an "
+            "internal contradiction in claim strength.")
+        findings = _call(ctx.client, system, f"PAPER:\n\n{ctx.paper_text}")
+        return _build_result(self, findings, time.time() - t0)
+
+
 class OrchestratorAgent(BaseAgent):
     id = "orchestrator"
     name = "Synthesis & Prioritized Action Plan"
@@ -1094,6 +1218,7 @@ ALL_AGENTS: list[BaseAgent] = [
     TruthfulnessAgent(),
     ConsistencyAgent(),
     DiscussionAgent(),
+    FidelityAgent(),
     MissingReferencesAgent(),
     ReferenceQualityAgent(),
     # Phase 3
