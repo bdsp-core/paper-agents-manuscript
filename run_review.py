@@ -559,9 +559,9 @@ def main() -> None:
     # Sort by priority
     selected.sort(key=lambda a: a.priority)
 
+    import agents as agents_module          # needed unconditionally: make_client() lives there
     # Override model if requested
     if args.model:
-        import agents as agents_module
         agents_module.MODEL = args.model
 
     print(bold(f"\n🤖 Running {len(selected)} agent(s) in "
@@ -580,7 +580,7 @@ def main() -> None:
         print(red("Error: ANTHROPIC_API_KEY environment variable not set."))
         sys.exit(1)
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = agents_module.make_client(api_key)   # max_retries=8: a single 529 used to zero an agent's score
 
     # Run agents phase by phase
     results: list[AgentResult] = []

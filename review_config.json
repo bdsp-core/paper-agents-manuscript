@@ -1,22 +1,17 @@
 {
-    "_comment": "Edit these fields to match your target journal. Used by the figures/tables agent and the overall tone of review.",
+    "_comment": "Configured for the narrative review 'A Unified Review of Foundation Models for Neurophysiological Signals' (fm-chenxi.tex), targeting Nature Reviews Bioengineering",
 
-    "journal_name": "Journal of the American Medical Association (JAMA Neurology)",
-    "paper_type": "Original research article",
-    "field": "Clinical neuroscience / computational neurology",
-    "word_limit": 3000,
-    "abstract_word_limit": 300,
-    "abstract_structure": "structured (Background, Methods, Results, Conclusions)",
-    "max_references": 40,
-    "max_figures": 5,
-    "max_tables": 5,
-    "figure_format": "TIFF or EPS",
-    "figure_resolution_dpi": 300,
-    "requires_data_availability_statement": true,
-    "requires_code_availability_statement": true,
-    "requires_ethics_statement": true,
-    "citation_style": "numbered superscript",
-    "style_guide": "AMA Manual of Style",
+    "journal_name": "Nature Reviews Bioengineering",
+    "paper_type": "Narrative review / survey article (Nature Reviews-style Review)",
+    "field": "Clinical neuroscience / EEG / PSG / neuroimaging foundation models / clinical AI",
+    "word_limit": 0,
+    "abstract_word_limit": 0,
+    "abstract_structure": "unstructured single-paragraph review abstract",
+    "max_references": 0,
+    "max_figures": 0,
+    "max_tables": 0,
+    "citation_style": "numbered (natbib, sort&compress)",
+    "style_guide": "Comprehensive narrative review: Introduction with motivation and contribution statement, systematic search methodology, thematic body sections organized by modality and method, comparison tables, synthesis/key-observations sections, and a forward-looking open-challenges/conclusion section.",
 
     "_preservation_comment": "Used by the prose review agents and the rewrite pipeline. protected_terms are topic nouns that must never be reworded or flagged (often nominalizations that are actually concepts). protect_hedges keeps scientific hedges/scope conditions from being cut as 'clutter'.",
     "protected_terms": [
@@ -26,8 +21,12 @@
     "protect_hedges": true,
 
     "custom_notes": [
-        "Avoid first person in abstracts",
-        "Report confidence intervals alongside p-values",
-        "Define all statistical methods in Methods section"
+        "Target journal is Nature Reviews Bioengineering: a high-impact, broad bioengineering readership. Prose should be authoritative, accessible to non-specialists in any single sub-field, conceptual rather than equation-heavy, and lead with significance. Reviews are expert-led, opinionated syntheses with a clear narrative and forward-looking outlook.",
+        "This is a long-form survey/review article, NOT a primary research paper or data descriptor — do not penalize the absence of original experiments, a Results section, or a data-availability statement.",
+        "There is no journal word limit to enforce; evaluate concision at the sentence/paragraph level, not against a fixed count.",
+        "The paper synthesizes 51 EEG-only models, 10 multimodal PSG models, and cross-modality neuroimaging work through mid-2026.",
+        "A central thesis is that data scale and corpus diversity drive clinical generalization more reliably than architecture alone; check that this thread is consistent throughout.",
+        "Many tables and figures are present; evaluate whether captions are self-contained and state findings.",
+        "Reproducibility/truthfulness agents: this is a secondary literature synthesis, so 'claims' should be checkable against the cited literature rather than against code in a repository."
     ]
 }

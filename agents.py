@@ -63,19 +63,47 @@ class Context:
 # Base helpers
 # ---------------------------------------------------------------------------
 
-MODEL = "claude-opus-4-5"
+MODEL = "claude-opus-5"
+
+
+def _text_of(resp) -> str:
+    """Concatenate the text blocks of a Messages response.
+
+    resp.content[0] is NOT always the text: on models with thinking enabled
+    (Claude Opus 5 and the rest of the 4.6+ family run adaptive thinking by
+    default) the first block is a ThinkingBlock, which has no .text.
+    """
+    parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+    if not parts:
+        raise RuntimeError(
+            f"model returned no text block (stop_reason={resp.stop_reason}, "
+            f"blocks={[getattr(b, 'type', '?') for b in resp.content]})")
+    return "\n".join(parts)
+
+
+# Retry harder than the SDK default: a single 529 from the API used to zero out an agent's score, and the
+# score history then recorded a regression that never happened.
+def make_client(api_key: str | None = None) -> anthropic.Anthropic:
+    return anthropic.Anthropic(max_retries=8, timeout=900.0, **({"api_key": api_key} if api_key else {}))
 
 
 def _call(client: anthropic.Anthropic, system: str, user: str,
           max_tokens: int = 2048) -> str:
     """Single Claude API call; returns text."""
-    resp = client.messages.create(
+    # Stream, and give thinking real headroom. The truthfulness agent reads a whole repository and hit
+    # max_tokens while still inside its thinking block, so it returned a thinking block and no text -- which
+    # the scorer recorded as 0.0/14, i.e. a total fabrication of a regression. Thinking tokens count against
+    # max_tokens, and the SDK wants streaming once max_tokens is large enough to risk an HTTP timeout.
+    with client.messages.stream(
         model=MODEL,
-        max_tokens=max_tokens,
+        max_tokens=max(max_tokens, 32000),
         system=system,
         messages=[{"role": "user", "content": user}],
-    )
-    return resp.content[0].text
+    ) as stream:
+        resp = stream.get_final_message()
+    if resp.stop_reason == "max_tokens":
+        raise RuntimeError(f"hit max_tokens ({max(max_tokens, 32000)}) before finishing; raise it")
+    return _text_of(resp)
 
 
 def _parse_severity(text: str) -> str:
