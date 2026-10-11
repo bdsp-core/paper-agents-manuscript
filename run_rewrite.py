@@ -70,8 +70,8 @@ def _is_prose(block: str, in_skip_section: bool) -> bool:
     s = block.strip()
     if not s or in_skip_section:
         return False
-    if s.startswith(("#", "|", "!", ">", "```", "\\", "$$", "- ", "* ", "+ ")):
-        return False  # heading, table, image, quote, code, latex, bullet list
+    if s.startswith(("#", "|", "!", ">", "```", "\\", "$$", "- ", "* ", "+ ", "%")):
+        return False  # heading, table, image, quote, code, latex, latex-comment, bullet list
     if s.startswith("**Table") or s.startswith("**Figure") or _LABEL_LINE.match(s):
         return False  # float caption or a "**Label:**" metadata line
     # markdown/grid table rows or rule lines

@@ -20,8 +20,11 @@
 
     "_preservation_comment": "Used by the prose review agents and the rewrite pipeline. protected_terms are topic nouns that must never be reworded or flagged (often nominalizations that are actually concepts). protect_hedges keeps scientific hedges/scope conditions from being cut as 'clutter'.",
     "protected_terms": [
-        "pharmacovigilance", "empirical null", "noise floor", "calibration",
-        "phenotype", "annotation", "classification", "scrambled-surrogate"
+        "interictal epileptiform discharge", "IED", "vertex wave", "wicket spike",
+        "POSTS", "BETS", "sharp transient", "calibration", "annotation", "classification",
+        "Gwet AC1", "Fleiss", "Krippendorff", "leave-one-expert-out", "majority vote",
+        "morphological continuum", "interrater reliability", "multinomial", "variance decomposition",
+        "rater main effect", "calibration error", "out-of-sample", "log-loss", "AUROC"
     ],
     "protect_hedges": true,
 
